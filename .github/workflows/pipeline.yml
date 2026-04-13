@@ -13,11 +13,67 @@ permissions:
 jobs:
 
 # =========================
-# 1. SAST JOB
+# 1. SECRET SCAN JOB
+# =========================
+  secret-scan:
+    name: Secret Scan (Gitleaks + TruffleHog)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    # -------------------------
+    # GITLEAKS SCAN
+    # -------------------------
+    - name: Install Gitleaks
+      run: |
+        wget https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks-linux-amd64.tar.gz
+        tar -xvzf gitleaks-linux-amd64.tar.gz
+        sudo mv gitleaks /usr/local/bin/
+
+    - name: Run Gitleaks
+      run: gitleaks detect --source . --report-path gitleaks-report.json || true
+
+    - name: Upload Gitleaks Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: gitleaks-report
+        path: gitleaks-report.json
+
+    # -------------------------
+    # TRUFFLEHOG SCAN
+    # -------------------------
+    - name: Install TruffleHog
+      run: pip install trufflehog
+
+    - name: Run TruffleHog
+      run: trufflehog filesystem . > trufflehog-report.txt || true
+
+    - name: Upload TruffleHog Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: trufflehog-report
+        path: trufflehog-report.txt
+
+    # -------------------------
+    # FAIL LOGIC
+    # -------------------------
+    - name: Fail if secrets detected
+      run: |
+        if [ -s gitleaks-report.json ]; then
+          echo "Secrets detected by Gitleaks"
+          exit 1
+        fi
+
+
+# =========================
+# 2. SAST JOB
 # =========================
   sast:
-    name: SAST Scan (Bandit)
     runs-on: ubuntu-latest
+    needs: secret-scan
 
     steps:
     - uses: actions/checkout@v3
@@ -29,11 +85,9 @@ jobs:
     - name: Install Bandit
       run: pip install bandit
 
-    # Generate report
     - name: Run Bandit Report
       run: bandit -r . -f json -o sast-report.json || true
 
-    # Upload artifact
     - name: Upload SAST Report
       uses: actions/upload-artifact@v4
       if: always()
@@ -41,17 +95,16 @@ jobs:
         name: sast-report
         path: sast-report.json
 
-    # Fail after upload
     - name: Fail if issues found
       run: bandit -r . -ll || true
 
 
 # =========================
-# 2. SCA JOB
+# 3. SCA JOB
 # =========================
   sca:
-    name: Dependency Scan (SCA)
     runs-on: ubuntu-latest
+    needs: secret-scan
 
     steps:
     - uses: actions/checkout@v3
@@ -66,11 +119,9 @@ jobs:
     - name: Install pip-audit
       run: pip install pip-audit
 
-    # Generate report
     - name: Run pip-audit Report
       run: pip-audit -f json -o sca-report.json || true
 
-    # Upload artifact
     - name: Upload SCA Report
       uses: actions/upload-artifact@v4
       if: always()
@@ -78,16 +129,14 @@ jobs:
         name: sca-report
         path: sca-report.json
 
-    # Fail after upload
     - name: Fail if vulnerabilities found
-      run: pip-audit | grep -E "HIGH|CRITICAL" && exit 1 || true
+      run: pip-audit
 
 
 # =========================
-# 3. BUILD JOB
+# 4. BUILD JOB
 # =========================
   build:
-    name: Build Docker Image
     runs-on: ubuntu-latest
     needs: [sast, sca]
 
@@ -99,10 +148,9 @@ jobs:
 
 
 # =========================
-# 4. CONTAINER SCAN JOB
+# 5. CONTAINER SCAN
 # =========================
   container-scan:
-    name: Container Scan (Trivy)
     runs-on: ubuntu-latest
     needs: build
 
@@ -119,11 +167,9 @@ jobs:
         wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.50.1_Linux-64bit.deb
         sudo dpkg -i trivy_0.50.1_Linux-64bit.deb
 
-    # Generate report
     - name: Run Trivy Report
       run: trivy image -f json -o container-report.json $IMAGE_NAME:latest || true
 
-    # Upload artifact
     - name: Upload Container Report
       uses: actions/upload-artifact@v4
       if: always()
@@ -131,33 +177,28 @@ jobs:
         name: container-report
         path: container-report.json
 
-    # Fail after upload
     - name: Fail on HIGH/CRITICAL
       run: trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME:latest
 
 
 # =========================
-# 5. RUN + TEST JOB
+# 6. TEST JOB
 # =========================
   test:
-    name: Run & Test Application
     runs-on: ubuntu-latest
     needs: container-scan
 
     steps:
     - uses: actions/checkout@v3
 
-    - name: Build Docker Image
+    - name: Build Image
       run: docker build -t $IMAGE_NAME:latest .
 
     - name: Run Container
       run: docker run -d -p 5000:5000 $IMAGE_NAME:latest
 
-    - name: Wait for App
+    - name: Wait
       run: sleep 10
 
-    - name: Test Home Endpoint
+    - name: Test Endpoint
       run: curl http://localhost:5000
-
-    - name: Test Vulnerable Endpoint
-      run: curl "http://localhost:5000/run?cmd=whoami"

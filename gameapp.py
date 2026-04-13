@@ -7,6 +7,7 @@ app = Flask(__name__)
 
 # 🚨 Hardcoded secret (SAST issue)
 app.secret_key = "super-secret-key"
+API_KEY = "sk_live_123456"
 
 # 🚨 Insecure logging
 logging.basicConfig(filename="app.log", level=logging.DEBUG)
