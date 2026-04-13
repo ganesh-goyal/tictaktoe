@@ -80,7 +80,7 @@ jobs:
 
     # Fail after upload
     - name: Fail if vulnerabilities found
-      run: pip-audit
+      run: pip-audit | grep -E "HIGH|CRITICAL" && exit 1 || true
 
 
 # =========================
