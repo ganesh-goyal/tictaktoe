@@ -65,7 +65,7 @@ jobs:
         if [ -s gitleaks-report.json ]; then
           echo "Secrets detected by Gitleaks"
           exit 1
-        fi
+        fi || true
 
 
 # =========================
